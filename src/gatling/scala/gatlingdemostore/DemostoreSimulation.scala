@@ -1,70 +1,152 @@
 package gatlingdemostore
 
 import scala.concurrent.duration._
-
 import io.gatling.core.Predef._
+import io.gatling.core.structure.ScenarioBuilder
 import io.gatling.http.Predef._
+import io.gatling.http.protocol.HttpProtocolBuilder
 import io.gatling.jdbc.Predef._
+
+import scala.util.Random
 
 class DemostoreSimulation extends Simulation {
 
-	val httpProtocol = http
-		.baseUrl("http://demostore.gatling.io")
-		.inferHtmlResources(BlackList(""".*\.js""", """.*\.css""", """.*\.gif""", """.*\.jpeg""", """.*\.jpg""", """.*\.ico""", """.*\.woff""", """.*\.woff2""", """.*\.(t|o)tf""", """.*\.png""", """.*detectportal\.firefox\.com.*"""), WhiteList())
-		.acceptHeader("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9")
-		.acceptEncodingHeader("gzip, deflate")
-		.acceptLanguageHeader("en-AU,en;q=0.9")
-		.doNotTrackHeader("1")
-		.userAgentHeader("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36")
+  val domain = "demostore.gatling.io"
 
-	val headers_0 = Map("Upgrade-Insecure-Requests" -> "1")
+	val httpProtocol: HttpProtocolBuilder = http
+		.baseUrl("http://" + domain)
 
-	val headers_4 = Map(
-		"Accept" -> "*/*",
-		"X-Requested-With" -> "XMLHttpRequest")
+  val categoryFeeder = csv("data/categoryDetails.csv").random
+  val jsonFeederProducts = jsonFile("data/productDetails.json").random
+  val loginFeeder = csv("data/loginDetails.csv").circular
 
-	val headers_6 = Map(
-		"Cache-Control" -> "max-age=0",
-		"Origin" -> "http://demostore.gatling.io",
-		"Upgrade-Insecure-Requests" -> "1")
+  val rnd = new Random()
+  def randomString(length: Int): String = {
+    rnd.alphanumeric.filter(_.isLetter).take(length).mkString
+  }
+  val initSession = exec(flushCookieJar)
+    .exec(session => session.set("randomNumber", rnd.nextInt()))
+    .exec(session => session.set("customerLoggedIn", false))
+    .exec(session => session.set("cartTotal", 0.00))
+    .exec(addCookie(Cookie("sessionId", randomString(10)).withDomain(domain)))
+    .exec { session => println(session); session} // for debugging remove when actually running load test
 
+  object CmsPages {
+    def homepage = {
+      exec(http("Load homepage")
+        .get("/")
+        .check(status.is(200))
+        .check(regex("<title>Gatling Demo-Store</title>").exists)
+        .check(css("#_csrf", "content").saveAs("csrfValue"))
+      )
+    }
 
+    def aboutUs = {
+      exec(http("Load about us page")
+        .get("/about-us")
+        .check(status.is(200))
+        .check(substring("About Us"))
+      )
+    }
+  }
 
-	val scn = scenario("DemostoreSimulation")
-		.exec(http("request_0")
-			.get("/")
-			.headers(headers_0))
+  object Catalog {
+    object Category {
+      def view = {
+        feed(categoryFeeder)
+          .exec(http("Load Category Page - ${categoryName}")
+            .get("/category/${categorySlug}")
+            .check(status.is(200))
+            .check(css("#CategoryName").is("${categoryName}"))
+          )
+      }
+    }
+
+    object Product {
+      def view = {
+        feed(jsonFeederProducts)
+          .exec(http("Load Product Page - ${name}")
+            .get("/product/${slug}")
+            .check(status.is(200))
+            .check(css("#ProductDescription").is("${description}"))
+          )
+      }
+
+      def add = {
+        exec(view)
+          .exec(http("Add Product to Cart")
+            .get("/cart/add/${id}")
+            .check(status.is(200))
+            .check(substring("items in your cart"))
+          )
+          .exec(session => {
+            val currentCartTotal = session("cartTotal").as[Double]
+            val itemPrice = session("price").as[Double]
+            session.set("cartTotal", (currentCartTotal+itemPrice))
+          })
+          .exec { session => println(session); session} // for debugging remove when actually running load test
+      }
+    }
+  }
+
+  object Customer {
+    def login = {
+      feed(loginFeeder)
+        .exec(
+          http("Load Login page")
+            .get("/login")
+            .check(status.is(200))
+            .check(substring("Username"))
+        )
+        .exec(http("Customer login action")
+          .post("/login")
+          .formParam("_csrf", "${csrfValue}")
+          .formParam("username", "${username}")
+          .formParam("password", "${password}")
+          .check(status.is(200))
+        )
+        .exec(session => session.set("customerLoggedIn", true))
+        .exec { session => println(session); session} // for debugging remove when actually running load test
+    }
+  }
+
+  object Checkout {
+    def viewCart = {
+      doIf(session => !session("customerLoggedIn").as[Boolean]) {
+        exec(Customer.login)
+      }
+      .exec(
+        http("load cart page")
+          .get("/cart/view")
+          .check(status.is(200))
+          .check(css("#grandTotal").is("$$${cartTotal}"))
+      )
+    }
+
+    def completeCheckout = {
+      exec(
+        http("Checkout Cart")
+          .get("/cart/checkout")
+          .check(status.is(200))
+          .check(substring("Thanks for your order!"))
+      )
+    }
+  }
+
+	val scn: ScenarioBuilder = scenario("DemostoreSimulation")
+    .exec(initSession)
+    .exec(CmsPages.homepage)
 		.pause(2)
-		.exec(http("request_1")
-			.get("/about-us")
-			.headers(headers_0))
-		.pause(3)
-		.exec(http("request_2")
-			.get("/category/all")
-			.headers(headers_0))
-		.pause(3)
-		.exec(http("request_3")
-			.get("/product/black-and-red-glasses")
-			.headers(headers_0))
+    .exec(CmsPages.aboutUs)
 		.pause(2)
-		.exec(http("request_4")
-			.get("/cart/add/19")
-			.headers(headers_4))
-		.pause(1)
-		.exec(http("request_5")
-			.get("/cart/view")
-			.headers(headers_0))
-		.pause(6)
-		.exec(http("request_6")
-			.post("/login")
-			.headers(headers_6)
-			.formParam("_csrf", "a38b0847-8ac9-4e48-8ea0-366eff8e2e15")
-			.formParam("username", "user1")
-			.formParam("password", "pass"))
-		.pause(12)
-		.exec(http("request_7")
-			.get("/cart/checkout")
-			.headers(headers_0))
+    .exec(Catalog.Category.view)
+		.pause(2)
+		.exec(Catalog.Product.add)
+		.pause(2)
+		.exec(Checkout.viewCart)
+		.pause(2)
+		.exec(Checkout.completeCheckout)
 
 	setUp(scn.inject(atOnceUsers(1))).protocols(httpProtocol)
+
 }
