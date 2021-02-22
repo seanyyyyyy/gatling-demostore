@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ScalaCompilerConfiguration">
-    <profile name="Gradle 1" modules="gatling-demostore.main,gatling-demostore.test,gatling-gradle-plugin-demo.main,gatling-gradle-plugin-demo.test">
+    <option name="postfixOps" value="true" />
+    <profile name="Gradle 1" modules="gatling-gradle-plugin-demo.main,gatling-gradle-plugin-demo.test">
       <option name="deprecationWarnings" value="true" />
       <option name="uncheckedWarnings" value="true" />
       <parameters>
         <parameter value="-target:jvm-14" />
+      </parameters>
+    </profile>
+    <profile name="Gradle 2" modules="gatling-demostore.main,gatling-demostore.test">
+      <option name="deprecationWarnings" value="true" />
+      <option name="uncheckedWarnings" value="true" />
+      <parameters>
+        <parameter value="-target:jvm-11" />
       </parameters>
     </profile>
   </component>
